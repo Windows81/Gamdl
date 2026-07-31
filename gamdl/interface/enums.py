@@ -4,9 +4,9 @@ from .constants import (
     ARTIST_AUTO_SELECT_KEY_MAP,
     ARTIST_AUTO_SELECT_STR_MAP,
     FOURCC_MAP,
-    LEGACY_SONG_CODECS,
     MEDIA_RATING_STR_MAP,
     MEDIA_TYPE_STR_MAP,
+    MEDIA_CODEC_FLAVOR_MAP,
 )
 
 
@@ -46,8 +46,11 @@ class MediaFileFormat(Enum):
 
 
 class SongCodec(Enum):
-    AAC_LEGACY = "aac-legacy"
-    AAC_HE_LEGACY = "aac-he-legacy"
+    AAC_WEB = "aac-web"
+    AAC_HE_WEB = "aac-he-web"
+    # doesnt work with wrapper, gives ckc error
+    # AAC_FPS_WEB = "aac-fps-web"
+    # AAC_HE_FPS_WEB = "aac-he-fps-web"
     AAC = "aac"
     AAC_HE = "aac-he"
     AAC_BINAURAL = "aac-binaural"
@@ -59,8 +62,17 @@ class SongCodec(Enum):
     ALAC = "alac"
     ASK = "ask"
 
-    def is_legacy(self) -> bool:
-        return self.value in LEGACY_SONG_CODECS
+    @property
+    def is_web(self) -> bool:
+        return self.value.endswith("-web")
+
+    @property
+    def flavor(self) -> str | None:
+        return MEDIA_CODEC_FLAVOR_MAP.get(self.value)
+
+    @property
+    def is_cenc(self) -> bool:
+        return self.flavor is not None and "ctrp" in self.flavor
 
 
 class MusicVideoCodec(Enum):
@@ -68,8 +80,9 @@ class MusicVideoCodec(Enum):
     H265 = "h265"
     ASK = "ask"
 
-    def fourcc(self) -> str:
-        return FOURCC_MAP[self.value]
+    @property
+    def fourcc(self) -> str | None:
+        return FOURCC_MAP.get(self.value)
 
 
 class MusicVideoResolution(Enum):

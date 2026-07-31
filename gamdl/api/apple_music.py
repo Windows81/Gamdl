@@ -11,19 +11,27 @@ from .constants import (
     APPLE_MUSIC_ALBUM_API_URI,
     APPLE_MUSIC_AMP_API_URL,
     APPLE_MUSIC_ARTIST_API_URI,
+    APPLE_MUSIC_ASSETS_API_URI,
     APPLE_MUSIC_COOKIE_DOMAIN,
     APPLE_MUSIC_HOMEPAGE_URL,
     APPLE_MUSIC_LIBRARY_ALBUM_API_URI,
     APPLE_MUSIC_LIBRARY_PLAYLIST_API_URI,
+    APPLE_MUSIC_LIBRARY_PLAYLISTS_API_URI,
     APPLE_MUSIC_LICENSE_API_URL,
+    APPLE_MUSIC_LIBRARY_MUSIC_VIDEO_API_URI,
     APPLE_MUSIC_MUSIC_VIDEO_API_URI,
+    APPLE_MUSIC_LIBRARY_ALBUMS_API_URI,
     APPLE_MUSIC_PLAYLIST_API_URI,
     APPLE_MUSIC_SEARCH_API_URI,
+    APPLE_MUSIC_LIBRARY_MUSIC_VIDEOS_API_URI,
+    APPLE_MUSIC_LIBRARY_SONG_API_URI,
+    APPLE_MUSIC_LIBRARY_SONGS_API_URI,
     APPLE_MUSIC_SONG_API_URI,
     APPLE_MUSIC_UPLOADED_VIDEO_API_URL,
     APPLE_MUSIC_WEBPLAYBACK_API_URL,
 )
 from .exceptions import GamdlApiResponseError
+from .wrapper import WrapperApi
 
 logger = structlog.get_logger(__name__)
 
@@ -86,7 +94,7 @@ class AppleMusicApi:
                 )
 
         index_js_uri_match = re.search(
-            r"/(assets/index-legacy[~-][^/\"]+\.js)",
+            r"/(assets/index[~-][^/\"]+\.js)",
             home_page,
         )
         if not index_js_uri_match:
@@ -109,7 +117,7 @@ class AppleMusicApi:
                     status_code=response.status_code if response is not None else None,
                 )
 
-        token_match = re.search('(?=eyJh)(.*?)(?=")', index_js_page)
+        token_match = re.search(r'"(eyJ[A-Za-z0-9\-_]+\.eyJ[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+)"', index_js_page)
         if not token_match:
             raise GamdlApiResponseError("Error finding token in index.js page")
         token = token_match.group(1)
@@ -242,25 +250,22 @@ class AppleMusicApi:
     @classmethod
     async def create_from_wrapper(
         cls,
-        wrapper_account_url: str = "http://127.0.0.1:30020/",
+        wrapper_api: WrapperApi,
         *args,
         **kwargs,
     ) -> "AppleMusicApi":
-        response = None
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.get(wrapper_account_url)
-                response.raise_for_status()
-                wrapper_account_info = response.json()
-            except httpx.HTTPError:
-                raise GamdlApiResponseError(
-                    "Error fetching wrapper account info",
-                    status_code=response.status_code if response is not None else None,
-                )
+        auth = wrapper_api.me.get("auth", {})
+        media_user_token = auth.get("music_user_token")
+        token = auth.get("dev_token")
+        if not media_user_token or not token:
+            raise GamdlApiResponseError(
+                "Wrapper account info is missing auth tokens",
+                status_code=None,
+            )
 
         return await cls.create(
-            media_user_token=wrapper_account_info["music_token"],
-            token=wrapper_account_info["dev_token"],
+            media_user_token=media_user_token,
+            token=token,
             *args,
             **kwargs,
         )
@@ -428,9 +433,54 @@ class AppleMusicApi:
 
         return artist
 
+    async def get_library_song(
+        self,
+        song_id: str,
+        include: str = "catalog",
+        extend: str = "extendedAssetUrls",
+    ) -> dict:
+        log = logger.bind(action="get_library_song", song_id=song_id)
+
+        song = await self._amp_request(
+            APPLE_MUSIC_LIBRARY_SONG_API_URI.format(
+                song_id=song_id,
+            ),
+            {
+                "include": include,
+                "extend": extend,
+            },
+        )
+
+        log.debug("success", song=song)
+
+        return song
+
+    async def get_library_music_video(
+        self,
+        music_video_id: str,
+        include: str = "catalog",
+    ) -> dict:
+        log = logger.bind(
+            action="get_library_music_video", music_video_id=music_video_id
+        )
+
+        music_video = await self._amp_request(
+            APPLE_MUSIC_LIBRARY_MUSIC_VIDEO_API_URI.format(
+                music_video_id=music_video_id,
+            ),
+            {
+                "include": include,
+            },
+        )
+
+        log.debug("success", music_video=music_video)
+
+        return music_video
+
     async def get_library_album(
         self,
         album_id: str,
+        include: str = "catalog",
         extend: str = "extendedAssetUrls",
     ) -> dict:
         log = logger.bind(action="get_library_album", album_id=album_id)
@@ -440,6 +490,7 @@ class AppleMusicApi:
                 album_id=album_id,
             ),
             {
+                "include": include,
                 "extend": extend,
             },
         )
@@ -451,7 +502,7 @@ class AppleMusicApi:
     async def get_library_playlist(
         self,
         playlist_id: str,
-        include: str = "tracks",
+        include: str = "catalog,tracks",
         limit: int = 100,
         extend: str = "extendedAssetUrls",
     ) -> dict:
@@ -471,6 +522,92 @@ class AppleMusicApi:
         log.debug("success", playlist=playlist)
 
         return playlist
+
+    async def get_library_songs(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        include: str = "catalog",
+        extend: str = "extendedAssetUrls",
+    ) -> dict:
+        log = logger.bind(action="get_library_songs")
+
+        library_songs = await self._amp_request(
+            APPLE_MUSIC_LIBRARY_SONGS_API_URI,
+            {
+                "limit": limit,
+                "offset": offset,
+                "include": include,
+                "extend": extend,
+            },
+        )
+
+        log.debug("success", library_songs=library_songs)
+
+        return library_songs
+
+    async def get_library_music_videos(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        include: str = "catalog",
+    ) -> dict:
+        log = logger.bind(action="get_library_music_videos")
+
+        library_music_videos = await self._amp_request(
+            APPLE_MUSIC_LIBRARY_MUSIC_VIDEOS_API_URI,
+            {
+                "limit": limit,
+                "offset": offset,
+                "include": include,
+            },
+        )
+
+        log.debug("success", library_music_videos=library_music_videos)
+
+        return library_music_videos
+
+    async def get_library_albums(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        include: str = "catalog",
+    ) -> dict:
+        log = logger.bind(action="get_library_albums")
+
+        library_albums = await self._amp_request(
+            APPLE_MUSIC_LIBRARY_ALBUMS_API_URI,
+            {
+                "limit": limit,
+                "offset": offset,
+                "include": include,
+            },
+        )
+
+        log.debug("success", library_albums=library_albums)
+
+        return library_albums
+
+    async def get_library_playlists(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        include: str = "catalog",
+    ) -> dict:
+        log = logger.bind(action="get_library_playlists")
+
+        library_playlists = await self._amp_request(
+            APPLE_MUSIC_LIBRARY_PLAYLISTS_API_URI,
+            {
+                "limit": limit,
+                "offset": offset,
+                "include": include,
+            },
+        )
+
+        log.debug("success", library_playlists=library_playlists)
+
+        return library_playlists
 
     async def get_search_results(
         self,
@@ -497,6 +634,41 @@ class AppleMusicApi:
 
         return search_results
 
+    async def get_assets(
+        self,
+        media_id: str,
+        kind: str = "song",
+        include_license_urls: bool = True,
+        hls_encryption: str = "CBC",
+        hls_profile: str = "enhancedHls",
+    ) -> dict:
+        log = logger.bind(
+            action="get_assets",
+            media_id=media_id,
+            kind=kind,
+            include_license_urls=include_license_urls,
+            hls_encryption=hls_encryption,
+            hls_profile=hls_profile,
+        )
+
+        params = {
+            "id": media_id,
+            "kind": kind,
+            "includeLicenseUrls": include_license_urls,
+            "hlsEncryption": hls_encryption,
+        }
+        if hls_profile:
+            params["hlsProfile"] = hls_profile
+
+        assets = await self._amp_request(
+            APPLE_MUSIC_ASSETS_API_URI,
+            params,
+        )
+
+        log.debug("success", assets=assets)
+
+        return assets
+
     async def get_extended_api_data(
         self,
         next_uri: str | None,
@@ -518,13 +690,11 @@ class AppleMusicApi:
         else:
             limit = None
 
-        offset = int(next_params["offset"][0])
-
         extended_data = await self._amp_request(
             urlparse(next_uri).path,
             {
-                "offset": offset,
                 **({"limit": limit} if limit else {}),
+                **{k: v for k, v in next_params.items() if k not in ["limit"]},
             },
         )
 
@@ -535,17 +705,26 @@ class AppleMusicApi:
     async def get_webplayback(
         self,
         track_id: str,
+        is_library: bool = False,
     ) -> dict:
         log = logger.bind(action="get_webplayback", track_id=track_id)
 
         response = None
+
+        if is_library:
+            request_body = {
+                "universalLibraryId": track_id,
+            }
+        else:
+            request_body = {
+                "salableAdamId": track_id,
+            }
+        request_body["language"] = self.language
+
         try:
             response = await self.client.post(
                 APPLE_MUSIC_WEBPLAYBACK_API_URL,
-                json={
-                    "salableAdamId": track_id,
-                    "language": self.language,
-                },
+                json=request_body,
             )
             response.raise_for_status()
             webplayback = response.json()

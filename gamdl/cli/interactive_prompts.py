@@ -17,12 +17,47 @@ class InteractivePrompts:
         return f"{minutes:02}:{seconds:02}"
 
     @staticmethod
+    async def get_wrapper_credentials() -> tuple[str, str]:
+        username = await inquirer.text(
+            message="Apple ID:",
+        ).execute_async()
+        password = await inquirer.secret(
+            message="Password:",
+        ).execute_async()
+        return username, password
+
+    @staticmethod
+    async def get_wrapper_2fa_code() -> str:
+        return await inquirer.text(
+            message="Two-factor authentication code:",
+        ).execute_async()
+
+    @staticmethod
+    def _get_song_codec_choice_name(
+        playlist: dict,
+    ) -> str:
+        stream_info = playlist["stream_info"]
+        audio = stream_info.get("audio")
+        if audio:
+            return audio
+
+        return " | ".join(
+            str(value)
+            for value in [
+                stream_info.get("codecs"),
+                stream_info.get("average_bandwidth") or stream_info.get("bandwidth"),
+                playlist.get("uri"),
+            ]
+            if value
+        )
+
+    @staticmethod
     async def ask_song_codec(
         playlists: list[dict],
     ) -> dict:
         choices = [
             Choice(
-                name=playlist["stream_info"]["audio"],
+                name=InteractivePrompts._get_song_codec_choice_name(playlist),
                 value=playlist,
             )
             for playlist in playlists

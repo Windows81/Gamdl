@@ -1,11 +1,16 @@
 import asyncio
+import multiprocessing
+import queue
 import re
 import shutil
+import traceback
 from pathlib import Path
 
 import structlog
 from mutagen.mp4 import MP4, MP4Cover
 from yt_dlp import YoutubeDL
+from yt_dlp.downloader.hls import HlsFD
+from yt_dlp.downloader.http import HttpFD
 
 from ..interface.enums import CoverFormat
 from ..interface.interface import AppleMusicInterface
@@ -17,6 +22,51 @@ from .enums import DownloadMode
 logger = structlog.get_logger(__name__)
 
 
+def _download_ytdlp_process(
+    stream_url: str,
+    download_path: str,
+    silent: bool,
+    result_queue,
+) -> None:
+    try:
+        Path(download_path).parent.mkdir(parents=True, exist_ok=True)
+
+        with YoutubeDL(
+            {
+                "quiet": True,
+                "no_warnings": True,
+                "overwrites": True,
+                "noprogress": silent,
+                "allow_unplayable_formats": True,
+                "concurrent_fragment_downloads": 8,
+            }
+        ) as ydl:
+            if stream_url.split("?")[0].endswith(".m3u8"):
+                hls_downloader = HlsFD(ydl, ydl.params)
+                success, _ = hls_downloader.download(
+                    download_path,
+                    {
+                        "url": stream_url,
+                        "ext": "mp4",
+                        "protocol": "m3u8",
+                    },
+                )
+                if not success:
+                    raise RuntimeError("yt-dlp HLS download failed")
+            else:
+                http_downloader = HttpFD(ydl, ydl.params)
+                success, _ = http_downloader.download(
+                    download_path,
+                    {
+                        "url": stream_url,
+                    },
+                )
+                if not success:
+                    raise RuntimeError("yt-dlp HTTP download failed")
+    except Exception as e:
+        result_queue.put(("error", repr(e), traceback.format_exc()))
+
+
 class AppleMusicBaseDownloader:
     def __init__(
         self,
@@ -24,10 +74,7 @@ class AppleMusicBaseDownloader:
         output_path: str = "./Apple Music",
         temp_path: str = ".",
         nm3u8dlre_path: str = "N_m3u8DL-RE",
-        mp4decrypt_path: str = "mp4decrypt",
         ffmpeg_path: str = "ffmpeg",
-        mp4box_path: str = "MP4Box",
-        wrapper_decrypt_ip: str = "127.0.0.1:10020",
         download_mode: DownloadMode = DownloadMode.YTDLP,
         album_folder_template: str = "{album_artist}/{album}",
         compilation_folder_template: str = "Compilations/{album}",
@@ -47,10 +94,7 @@ class AppleMusicBaseDownloader:
         self.output_path = output_path
         self.temp_path = temp_path
         self.nm3u8dlre_path = nm3u8dlre_path
-        self.mp4decrypt_path = mp4decrypt_path
         self.ffmpeg_path = ffmpeg_path
-        self.mp4box_path = mp4box_path
-        self.wrapper_decrypt_ip = wrapper_decrypt_ip
         self.download_mode = download_mode
         self.album_folder_template = album_folder_template
         self.compilation_folder_template = compilation_folder_template
@@ -72,16 +116,12 @@ class AppleMusicBaseDownloader:
         log = logger.bind(action="initialize_binary_paths")
 
         self.full_nm3u8dlre_path = shutil.which(self.nm3u8dlre_path)
-        self.full_mp4decrypt_path = shutil.which(self.mp4decrypt_path)
         self.full_ffmpeg_path = shutil.which(self.ffmpeg_path)
-        self.full_mp4box_path = shutil.which(self.mp4box_path)
 
         log = log.debug(
             "success",
             full_nm3u8dlre_path=self.full_nm3u8dlre_path,
-            full_mp4decrypt_path=self.full_mp4decrypt_path,
             full_ffmpeg_path=self.full_ffmpeg_path,
-            full_mp4box_path=self.full_mp4box_path,
         )
 
     def get_temp_path(
@@ -219,40 +259,70 @@ class AppleMusicBaseDownloader:
 
         return final_path
 
-    async def download_stream(self, stream_url: str, download_path: str):
+    async def download_stream(
+        self,
+        stream_url: str,
+        download_path: str,
+    ):
         log = logger.bind(
             action="download_stream", stream_url=stream_url, download_path=download_path
         )
 
-        if self.download_mode == DownloadMode.YTDLP:
-            await self._download_ytdlp_async(stream_url, download_path)
+        stream_url_stripped = stream_url.split("?")[0]
 
-        if self.download_mode == DownloadMode.NM3U8DLRE:
+        if (
+            self.download_mode == DownloadMode.YTDLP
+            or not stream_url_stripped.endswith(".m3u8")
+        ):
+            await self._download_ytdlp_async(
+                stream_url,
+                download_path,
+            )
+
+        elif self.download_mode == DownloadMode.NM3U8DLRE:
             await self._download_nm3u8dlre(stream_url, download_path)
 
         log.debug("success")
 
-    async def _download_ytdlp_async(self, stream_url: str, download_path: str) -> None:
-        await asyncio.to_thread(
-            self._download_ytdlp_sync,
-            stream_url,
-            download_path,
+    async def _download_ytdlp_async(
+        self,
+        stream_url: str,
+        download_path: str,
+    ) -> None:
+        ctx = multiprocessing.get_context()
+        result_queue = ctx.Queue()
+        process = ctx.Process(
+            target=_download_ytdlp_process,
+            args=(stream_url, download_path, self.silent, result_queue),
         )
+        process.start()
 
-    def _download_ytdlp_sync(self, stream_url: str, download_path: str) -> None:
-        with YoutubeDL(
-            {
-                "quiet": True,
-                "no_warnings": True,
-                "outtmpl": download_path,
-                "allow_unplayable_formats": True,
-                "overwrites": True,
-                "fixup": "never",
-                "noprogress": self.silent,
-                "allowed_extractors": ["generic"],
-            }
-        ) as ydl:
-            ydl.download(stream_url)
+        try:
+            while process.is_alive():
+                await asyncio.sleep(0.1)
+
+            process.join()
+
+            try:
+                status, error_repr, error_traceback = result_queue.get_nowait()
+            except queue.Empty:
+                status = None
+
+            if status == "error":
+                raise RuntimeError(
+                    f"yt-dlp failed: {error_repr}\n{error_traceback}"
+                ) from None
+
+            if process.exitcode != 0:
+                raise RuntimeError(f"yt-dlp exited with code {process.exitcode}")
+        finally:
+            if process.is_alive():
+                process.terminate()
+                await asyncio.to_thread(process.join, 5)
+                if process.is_alive():
+                    process.kill()
+                    await asyncio.to_thread(process.join)
+            process.close()
 
     async def _download_nm3u8dlre(self, stream_url: str, download_path: str):
         download_path_obj = Path(download_path)
@@ -315,7 +385,6 @@ class AppleMusicBaseDownloader:
         skip_tagging: bool,
     ):
         mp4 = MP4(media_path)
-        mp4.clear()
 
         if not skip_tagging:
             if cover_bytes is not None:

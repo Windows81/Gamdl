@@ -23,31 +23,35 @@ A command-line app for downloading Apple Music songs, music videos and post vide
 ### Required
 
 - **Python 3.10 or higher**
-- **Apple Music Cookies** - Export your browser cookies in Netscape format while logged in with an active subscription at the Apple Music website:
+- **Active Apple Music subscription**
+- **Apple Music Cookies** - export your browser cookies in Netscape format while logged in at [Apple Music](https://music.apple.com):
   - **Firefox**: [Export Cookies](https://addons.mozilla.org/addon/export-cookies-txt)
   - **Chromium**: [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc)
 
-### Dependencies
+### Optional Dependencies
 
-Add these tools to your system PATH or specify their paths via command-line arguments or the config file. The tools needed depend on which audio quality, video format, and download mode you want. Use the table below to find the required tools for your use case:
+#### Wrapper
 
-| Use Case | Configuration | Required Tools |
-|---|---|---|
-| **Songs in Legacy Codecs** | `song_codec_priority: aac-legacy\|aac-he-legacy` | None |
-| **Songs in Non Legacy Codecs** | `song_codec_priority: aac\|aac-he\|aac-binaural\|aac-downmix\|aac-he-binaural\|aac-he-downmix\|atmos\|ac3`<br/>`use_wrapper: true` | Wrapper |
-| **Music Videos** | `music_video_remux_mode: ffmpeg` | FFmpeg<br/>mp4decrypt |
-| | `music_video_remux_mode: mp4box` | MP4Box<br/>mp4decrypt |
-| **Faster Downloads** | `download_mode: nm3u8dlre` | N_m3u8DL-RE |
+Run the [Wrapper v2](https://github.com/glomatico/wrapper-v2) server for wrapper-backed account, playback, and decryption requests. Enable it with `--use-wrapper` or `use_wrapper = true`. Configure wrapper HTTP account/playback calls with `--wrapper-url` or `wrapper_url`, and configure WV2D batch TCP decrypt with `--wrapper-decrypt-host` / `--wrapper-decrypt-port`.
 
-#### Tool Reference
+gamdl builds a private Rust extension from `gamdl/downloader/ammuxer` as `gamdl._ammuxer`. That native media engine handles wrapper TCP decrypt/reassembly plus MP4/M4A writing and muxing; Python remains responsible for the CLI, downloads, metadata tagging, and high-level orchestration.
 
-| Tool | Download | Purpose |
-|---|---|---|
-| **FFmpeg** | [Windows](https://github.com/AnimMouse/ffmpeg-stable-autobuild/releases) / [Linux](https://johnvansickle.com/ffmpeg/) | Required for music video remuxing with FFmpeg mode |
-| **MP4Box** | [Download](https://gpac.io/downloads/gpac-nightly-builds/) | Alternative for music video remuxing |
-| **mp4decrypt** | [Download](https://www.bento4.com/downloads/) | Decrypts MP4 files when used with MP4Box |
-| **N_m3u8DL-RE** | [Download](https://github.com/nilaoda/N_m3u8DL-RE/releases/latest) | Faster download alternative |
-| **Wrapper** | [Download](https://github.com/WorldObservationLog/wrapper) | For downloading songs in ALAC and other experimental codecs |
+The wrapper is recommended when using the `alac` song codec. ALAC can be attempted without wrapper, but it probably won't work due to API limitations.
+
+**Note:**
+
+- When using the Wrapper, you'll be asked to insert your credentials to login if you haven't already.
+- Newer wrapper-v2 builds use HTTP JSON for account/playback and WV2D batch TCP port `10020` for decrypt.
+- Song codecs other than `alac` do not require the wrapper.
+- Cookies can be skipped when using the wrapper.
+
+#### N_m3u8DL-RE
+
+Use [N_m3u8DL-RE](https://github.com/nilaoda/N_m3u8DL-RE/releases/latest) as a faster download alternative to the default yt-dlp download mode. Enable it with `--download-mode nm3u8dlre` or `download_mode = nm3u8dlre`.
+
+If the executable is not available in your system PATH, set its location with `--nm3u8dlre-path` or `nm3u8dlre_path`.
+
+N_m3u8DL-RE also needs FFmpeg. If the FFmpeg executable is not available in your system PATH, set its location with `--ffmpeg-path` or `ffmpeg_path`.
 
 ## 📦 Installation
 
@@ -61,9 +65,8 @@ Add these tools to your system PATH or specify their paths via command-line argu
    - Place the cookies file in the working directory as `cookies.txt`, or
    - Specify the path using `--cookies-path` or in the config file
 
-3. **Optional: Set up tools** (only if you need the functionality)
-
-   See the [Dependencies](#dependencies) section to determine which tools you need based on your use case, then follow the [Tool Reference](#tool-reference) for download and installation instructions.
+3. **Optional: Set up dependencies** (only if you need the functionality)
+   See the [Optional Dependencies](#optional-dependencies) section to determine which optional tools you need.
 
 ## 🚀 Usage
 
@@ -73,10 +76,10 @@ gamdl [OPTIONS] URLS...
 
 ### Supported URL Types
 
-- Songs
-- Albums (Public/Library)
-- Playlists (Public/Library)
-- Music Videos
+- Songs (Catalog/Library)
+- Albums (Catalog/Library)
+- Playlists (Catalog/Library)
+- Music Videos (Catalog/Library)
 - Artists
 - Post Videos
 - Apple Music Classical
@@ -136,11 +139,11 @@ The file is created automatically on first run. Command-line arguments override 
 | `--no-config-file`, `-n`        | Don't use a config file                                           | `false`                                        |
 | **Apple Music Options**         |                                                                   |                                                |
 | `--cookies-path`, `-c`          | Cookies file path                                                 | `./cookies.txt`                                |
-| `--media-user-token`            | Raw *media_user_token* cookie                                     | -                                              |
+| `--media-user-token`            | Raw _media_user_token_ cookie                                     | -                                              |
 | `--auth-token`                  | Optional authorization token to pair with `--media-user-token`    | -                                              |
 | `--wrapper-account-url`         | Wrapper account URL                                               | `http://127.0.0.1:30020`                       |
 | `--language`, `-l`              | Metadata language                                                 | `en-US`                                        |
-| **Output Options**              |                                                                   |                                                |
+| **Interface Options**           |                                                                   |                                                |
 | `--cover-format`                | Cover format                                                      | `jpg`                                          |
 | `--cover-size`                  | Cover size in pixels                                              | `1200`                                         |
 | `--wvd-path`                    | .wvd file path                                                    | -                                              |
@@ -186,7 +189,6 @@ The file is created automatically on first run. Command-line arguments override 
 | `--save-cover`, `-s`            | Save cover as separate file                                       | `false`                                        |
 | `--save-playlist`               | Save M3U8 playlist file                                           | `false`                                        |
 
-
 ### Template Variables
 
 **Tags for templates and exclude-tags:**
@@ -216,12 +218,8 @@ The file is created automatically on first run. Command-line arguments override 
 - `ytdlp`, `nm3u8dlre`
 
 > [!NOTE]
+>
 > - **yt-dlp is only used as a file download library**. Media is still fetched directly from Apple Music's servers, and yt-dlp is only responsible for handling the file download process.
-
-### Remux Mode
-
-- `ffmpeg`
-- `mp4box` - Preserve the original closed caption track in music videos and some other minor metadata
 
 ### Cover Format
 
@@ -235,12 +233,12 @@ Use ISO 639-1 language codes (e.g., `en-US`, `es-ES`, `ja-JP`, `pt-BR`). Don't a
 
 ### Song Codecs
 
-**Stable:**
+**Web:**
 
-- `aac-legacy` - AAC 256kbps 44.1kHz
-- `aac-he-legacy` - AAC-HE 64kbps 44.1kHz
+- `aac-web` - AAC 256kbps 44.1kHz
+- `aac-he-web` - AAC-HE 64kbps 44.1kHz
 
-**Experimental** (may not work due to API limitations):
+**Non-web** (`alac` can be attempted without wrapper, but it probably won't work due to API limitations):
 
 - `aac` - AAC 256kbps up to 48kHz
 - `aac-he` - AAC-HE 64kbps up to 48kHz
@@ -250,8 +248,8 @@ Use ISO 639-1 language codes (e.g., `en-US`, `es-ES`, `ja-JP`, `pt-BR`). Don't a
 - `aac-he-downmix` - AAC-HE 64kbps downmix
 - `atmos` - Dolby Atmos 768kbps
 - `ac3` - AC3 640kbps
-- `alac` - ALAC up to 24-bit/192kHz (unsupported)
-- `ask` - Interactive experimental codec selection
+- `alac` - ALAC up to 24-bit/192kHz
+- `ask` - Interactive codec selection
 
 ### Synced Lyrics Format
 
@@ -288,16 +286,6 @@ Use ISO 639-1 language codes (e.g., `en-US`, `es-ES`, `ja-JP`, `pt-BR`). Don't a
 - `all-albums`
 - `top-songs`
 - `music-videos`
-
-## ⚙️ Wrapper
-
-Use the [wrapper](https://github.com/WorldObservationLog/wrapper) to download songs in ALAC and other experimental codecs without API limitations. Cookies are not required when using the wrapper.
-
-### Setup Instructions
-
-1. **Start the wrapper server** - Run the wrapper server
-2. **Enable wrapper in Gamdl** - Use `--use-wrapper` flag or set `use_wrapper = true` in config
-3. **Run Gamdl** - Download as usual with the wrapper enabled
 
 ## 🐍 Embedding
 
@@ -378,7 +366,7 @@ async def main():
 
     # Download from URL
     url = "https://music.apple.com/us/album/never-gonna-give-you-up-2022-remaster/1624945511?i=1624945512"
-    
+
     download_queue = []
     async for media in downloader.get_download_item_from_url(url):
         download_queue.append(media)

@@ -4,7 +4,7 @@ import structlog
 
 from ..interface.enums import CoverFormat
 from ..interface.types import AppleMusicMedia, DecryptionKeyAv
-from .amdecrypt import decrypt_file, decrypt_file_hex
+from .ammuxer import decrypt_and_mux_hex, decrypt_and_mux_wrapper
 from .base import AppleMusicBaseDownloader
 from .types import DownloadItem
 
@@ -51,43 +51,53 @@ class AppleMusicSongDownloader:
 
         return download_item
 
-    async def _decrypt_amdecrypt(
+    async def _decrypt_ammuxer(
         self,
         input_path: str,
         output_path: str,
         media_id: str,
         fairplay_key: str,
+        use_single_content_key: bool = False,
     ) -> None:
-        await decrypt_file(
-            self.base.wrapper_decrypt_ip,
+        wrapper_api = self.base.interface.base.wrapper_api
+        if wrapper_api is None:
+            raise ValueError("wrapper_api is required for FairPlay decrypt")
+
+        await decrypt_and_mux_wrapper(
+            wrapper_api,
             media_id,
-            fairplay_key,
             input_path,
             output_path,
+            fairplay_key_audio=fairplay_key,
+            use_single_content_key=use_single_content_key,
         )
 
-    async def _decrypt_amdecrypt_hex(
+    async def _decrypt_ammuxer_hex(
         self,
         input_path: str,
         output_path: str,
         decryption_key: str,
-        legacy: bool = False,
+        *,
+        use_cenc: bool = False,
+        use_single_content_key: bool = False,
     ) -> None:
-        await decrypt_file_hex(
+        await decrypt_and_mux_hex(
+            decryption_key,
             input_path,
             output_path,
-            decryption_key,
-            legacy=legacy,
+            use_cenc=use_cenc,
+            use_single_content_key=use_single_content_key,
         )
 
     async def stage(
         self,
         encrypted_path: str,
         staged_path: str,
-        decryption_key: DecryptionKeyAv,
-        legacy: bool,
         media_id: str,
-        fairplay_key: str,
+        decryption_key: DecryptionKeyAv | None = None,
+        fairplay_key: str = None,
+        use_cenc: bool = False,
+        use_single_content_key: bool = False,
     ):
         log = logger.bind(
             action="stage_song",
@@ -96,19 +106,21 @@ class AppleMusicSongDownloader:
             staged_path=staged_path,
         )
 
-        if self.base.interface.base.use_wrapper and not legacy:
-            await self._decrypt_amdecrypt(
+        if decryption_key:
+            await self._decrypt_ammuxer_hex(
+                encrypted_path,
+                staged_path,
+                decryption_key.audio_track.key,
+                use_cenc=use_cenc,
+                use_single_content_key=use_single_content_key,
+            )
+        else:
+            await self._decrypt_ammuxer(
                 encrypted_path,
                 staged_path,
                 media_id,
                 fairplay_key,
-            )
-        else:
-            await self._decrypt_amdecrypt_hex(
-                encrypted_path,
-                staged_path,
-                decryption_key.audio_track.key,
-                legacy,
+                use_single_content_key=use_single_content_key,
             )
 
         log.debug("success")
@@ -147,25 +159,32 @@ class AppleMusicSongDownloader:
         self,
         download_item: DownloadItem,
     ) -> None:
-        encrypted_path = self.base.get_temp_path(
-            download_item.media.media_metadata["id"],
-            download_item.uuid_,
-            "encrypted",
-            ".m4a",
-        )
-        await self.base.download_stream(
-            download_item.media.stream_info.audio_track.stream_url,
-            encrypted_path,
-        )
+        if download_item.media.stream_info.audio_track.drm_free:
+            await self.base.download_stream(
+                download_item.media.stream_info.audio_track.stream_url,
+                download_item.staged_path,
+            )
+        else:
+            encrypted_path = self.base.get_temp_path(
+                download_item.media.media_metadata["id"],
+                download_item.uuid_,
+                "encrypted",
+                ".m4a",
+            )
+            await self.base.download_stream(
+                download_item.media.stream_info.audio_track.stream_url,
+                encrypted_path,
+            )
 
-        await self.stage(
-            encrypted_path,
-            download_item.staged_path,
-            download_item.media.decryption_key,
-            download_item.media.stream_info.audio_track.legacy,
-            download_item.media.media_metadata["id"],
-            download_item.media.stream_info.audio_track.fairplay_key,
-        )
+            await self.stage(
+                encrypted_path,
+                download_item.staged_path,
+                download_item.media.media_id,
+                download_item.media.decryption_key,
+                download_item.media.stream_info.audio_track.fairplay_key,
+                download_item.media.stream_info.audio_track.use_cenc,
+                download_item.media.stream_info.audio_track.use_single_content_key,
+            )
 
         cover_bytes = (
             await self.base.interface.base.get_cover_bytes(

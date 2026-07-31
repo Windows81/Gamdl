@@ -10,6 +10,7 @@ from httpx import ConnectError
 
 from .. import __version__
 from ..api import AppleMusicApi
+from ..api.wrapper import WrapperApi
 from ..downloader import (
     AppleMusicBaseDownloader,
     AppleMusicDownloader,
@@ -33,6 +34,7 @@ from ..interface import (
     GamdlInterfaceMediaNotStreamableError,
     GamdlInterfaceUrlParseError,
 )
+from ..interface.enums import SongCodec
 from .cli_config import CliConfig
 from .config_file import ConfigFile
 from .database import Database
@@ -64,29 +66,38 @@ async def main(config: CliConfig):
     if config.log_file:
         log_output.add_file(config.log_file)
 
+    processors = [structlog.processors.add_log_level]
+    if not config.no_exceptions:
+        processors.append(structlog.processors.ExceptionPrettyPrinter())
+    processors.append(custom_structlog_formatter)
+
     structlog.configure(
-        processors=[
-            structlog.processors.add_log_level,
-            structlog.processors.ExceptionPrettyPrinter(),
-            custom_structlog_formatter,
-        ],
+        processors=processors,
         logger_factory=structlog.PrintLoggerFactory(file=log_output),
         wrapper_class=structlog.make_filtering_bound_logger(config.log_level),
     )
 
     logger.info(f"Starting Gamdl {__version__}")
 
+    interactive_prompts = InteractivePrompts(
+        artist_auto_select=config.artist_auto_select,
+    )
+
     if config.use_wrapper:
         try:
+            wrapper_api = await WrapperApi.create(
+                base_url=config.wrapper_url,
+                decrypt_host=config.wrapper_decrypt_host,
+                decrypt_port=config.wrapper_decrypt_port,
+                get_credentials_func=InteractivePrompts.get_wrapper_credentials,
+                get_2fa_code=InteractivePrompts.get_wrapper_2fa_code,
+            )
             apple_music_api = await AppleMusicApi.create_from_wrapper(
-                wrapper_account_url=config.wrapper_account_url,
+                wrapper_api=wrapper_api,
                 language=config.language,
             )
-        except ConnectError:
-            logger.critical(
-                "Could not connect to the wrapper account API. "
-                "Make sure the wrapper is running and the URL is correct."
-            )
+        except Exception as e:
+            logger.exception(f"Error: {e}")
             return
             
     elif config.media_user_token:
@@ -102,6 +113,7 @@ async def main(config: CliConfig):
             cookies_path=cookies_path,
             language=config.language,
         )
+        wrapper_api = None
 
     if not apple_music_api.active_subscription:
         logger.critical(
@@ -116,14 +128,11 @@ async def main(config: CliConfig):
             " downloadable"
         )
 
-    if (
-        any(not codec.is_legacy() for codec in config.song_codec_piority)
-        and not config.use_wrapper
-    ):
+    if SongCodec.ALAC in config.song_codec_piority and not config.use_wrapper:
         logger.warning(
-            "You have chosen an experimental song codec "
-            "without enabling wrapper. "
-            "They're not guaranteed to work due to API limitations."
+            "You have chosen ALAC without enabling wrapper. "
+            "ALAC may be attempted without wrapper, but it probably won't work due "
+            "to API limitations."
         )
 
     if config.database_path:
@@ -133,17 +142,12 @@ async def main(config: CliConfig):
         database = None
         flat_filter = None
 
-    interactive_prompts = InteractivePrompts(
-        artist_auto_select=config.artist_auto_select,
-    )
-
     base_interface = await AppleMusicBaseInterface.create(
         apple_music_api=apple_music_api,
         cover_format=config.cover_format,
         cover_size=config.cover_size,
-        use_wrapper=config.use_wrapper,
-        wrapper_m3u8_ip=config.wrapper_m3u8_ip,
         wvd_path=config.wvd_path,
+        wrapper_api=wrapper_api,
     )
 
     song_interface = AppleMusicSongInterface(
@@ -181,10 +185,7 @@ async def main(config: CliConfig):
         output_path=config.output_path,
         temp_path=config.temp_path,
         nm3u8dlre_path=config.nm3u8dlre_path,
-        mp4decrypt_path=config.mp4decrypt_path,
         ffmpeg_path=config.ffmpeg_path,
-        mp4box_path=config.mp4box_path,
-        wrapper_decrypt_ip=config.wrapper_decrypt_ip,
         download_mode=config.download_mode,
         album_folder_template=config.album_folder_template,
         compilation_folder_template=config.compilation_folder_template,
@@ -205,7 +206,6 @@ async def main(config: CliConfig):
     )
     music_video_downloader = AppleMusicMusicVideoDownloader(
         base=base_downloader,
-        remux_mode=config.music_video_remux_mode,
         remux_format=config.music_video_remux_format,
     )
     uploaded_video_downloader = AppleMusicUploadedVideoDownloader(

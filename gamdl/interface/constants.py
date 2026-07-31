@@ -11,8 +11,6 @@ MEDIA_RATING_STR_MAP = {
     2: "Clean",
 }
 
-LEGACY_SONG_CODECS = {"aac-legacy", "aac-he-legacy"}
-
 DRM_DEFAULT_KEY_MAPPING = {
     "urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed": (
         "data:text/plain;base64,AAAAOHBzc2gAAAAA7e+LqXnWSs6jyCfc1R0h7QAAABgSEAAAAAA"
@@ -73,8 +71,8 @@ VALID_URL_PATTERN = re.compile(
     r"(?:\?i=(?P<sub_id>[0-9]+))?"
     r"|"
     r"(?:/(?P<library_storefront>[a-z]{2}))?"
-    r"/library/(?P<library_type>playlist|albums)"
-    r"/(?P<library_id>p\.[a-zA-Z0-9]+|l\.[a-zA-Z0-9]+)"
+    r"/library/(?P<library_type>playlist|albums|songs|music-videos)"
+    r"/(?P<library_id>[pli]\.[a-zA-Z0-9]+)"
     r")"
 )
 
@@ -95,4 +93,11 @@ ARTIST_AUTO_SELECT_STR_MAP = {
     "all-albums": "All Albums",
     "top-songs": "Top Songs",
     "music-videos": "Music Videos",
+}
+
+MEDIA_CODEC_FLAVOR_MAP = {
+    "aac-web": "28:ctrp256",
+    "aac-he-web": "32:ctrp64",
+    "aac-fps-web": "30:cbcp256",
+    "aac-he-fps-web": "34:cbcp64",
 }

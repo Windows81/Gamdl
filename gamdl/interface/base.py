@@ -15,9 +15,10 @@ from gamdl.interface.wvd import WVD
 
 from ..api.apple_music import AppleMusicApi
 from ..api.itunes import ItunesApi
+from ..api.wrapper import WrapperApi
 from .constants import IMAGE_FILE_EXTENSION_MAP
 from .enums import CoverFormat
-from .types import Cover, DecryptionKey, PlaylistTags
+from .types import Cover, DecryptionKey, MediaRating, MediaTags, MediaType, PlaylistTags
 
 logger = structlog.get_logger(__name__)
 
@@ -27,19 +28,17 @@ class AppleMusicBaseInterface:
         self,
         apple_music_api: AppleMusicApi,
         itunes_api: ItunesApi,
+        wrapper_api: WrapperApi | None,
         cover_format: CoverFormat,
         cover_size: int,
-        use_wrapper: bool,
-        wrapper_m3u8_ip: str,
         cdm: Cdm,
     ) -> None:
         self.apple_music_api = apple_music_api
         self.itunes_api = itunes_api
         self.cover_format = cover_format
         self.cover_size = cover_size
-        self.use_wrapper = use_wrapper
-        self.wrapper_m3u8_ip = wrapper_m3u8_ip
         self.cdm = cdm
+        self.wrapper_api = wrapper_api
 
     @staticmethod
     def create_cdm(wvd_path: str | None = None) -> Cdm:
@@ -56,11 +55,6 @@ class AppleMusicBaseInterface:
         media_metadata: dict,
     ) -> bool:
         return bool(media_metadata["attributes"].get("playParams"))
-
-    @staticmethod
-    def parse_catalog_media_id(media_metadata: dict) -> str:
-        play_params = media_metadata["attributes"].get("playParams", {})
-        return play_params.get("catalogId", media_metadata["id"])
 
     @staticmethod
     def parse_media_id_from_url(media_metadata: dict) -> str | None:
@@ -119,16 +113,23 @@ class AppleMusicBaseInterface:
             template_cover_url,
         )
 
+    @staticmethod
+    def get_catalog_metadata_from_library(library_metadata: dict) -> dict | None:
+        data = library_metadata.get("relationships", {}).get("catalog", {}).get("data")
+        if not data:
+            return None
+
+        return data[0]
+
     @classmethod
     async def create(
         cls,
         apple_music_api: AppleMusicApi,
         cover_format: CoverFormat = CoverFormat.JPG,
         cover_size: int = 1200,
-        use_wrapper: bool = False,
-        wrapper_m3u8_ip: str = "127.0.0.1:20020",
         wvd_path: str | None = None,
         itunes_api: ItunesApi | None = None,
+        wrapper_api: WrapperApi | None = None,
     ):
         itunes_api = itunes_api or await ItunesApi.create(
             storefront=apple_music_api.storefront,
@@ -146,9 +147,8 @@ class AppleMusicBaseInterface:
             itunes_api=itunes_api,
             cover_format=cover_format,
             cover_size=cover_size,
-            use_wrapper=use_wrapper,
-            wrapper_m3u8_ip=wrapper_m3u8_ip,
             cdm=cdm,
+            wrapper_api=wrapper_api,
         )
         return base
 
@@ -205,8 +205,8 @@ class AppleMusicBaseInterface:
     async def get_cover_bytes(self, cover_url: str) -> bytes | None:
         log = logger.bind(action="get_cover_bytes", cover_url=cover_url)
 
-        async with httpx.AsyncClient() as client:
-            response = await client.get(cover_url)
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(cover_url, follow_redirects=True)
 
             if response.status_code == 404:
                 log.debug("cover_not_found")
@@ -266,9 +266,7 @@ class AppleMusicBaseInterface:
         self,
         metadata: dict,
     ) -> str:
-        log = logger.bind(
-            action="get_cover", media_id=self.parse_catalog_media_id(metadata)
-        )
+        log = logger.bind(action="get_cover", media_id=metadata["id"])
 
         template_url = self._get_cover_template_url(metadata)
 
@@ -336,3 +334,74 @@ class AppleMusicBaseInterface:
         log.debug("success", playlist_tags=playlist_tags)
 
         return playlist_tags
+
+    async def get_tags_from_asset_info(
+        self,
+        asset_data: dict,
+        lyrics: str | None = None,
+        use_album_date: bool = False,
+    ) -> MediaTags:
+        log = logger.bind(
+            action="get_tags_from_asset_info", asset_id=asset_data["itemId"]
+        )
+
+        date = None
+
+        if use_album_date:
+            if asset_data.get("playlistId"):
+                date = await self.get_media_date(asset_data["playlistId"])
+            else:
+                log.debug("no_playlist_id_for_album_date")
+
+        if date is None and asset_data.get("releaseDate"):
+            date = self.parse_date(asset_data["releaseDate"])
+
+        tags = MediaTags(
+            album=asset_data.get("playlistName"),
+            album_artist=asset_data.get("playlistArtistName"),
+            album_id=(
+                int(asset_data["playlistId"]) if asset_data.get("playlistId") else None
+            ),
+            album_sort=asset_data.get("sort-album"),
+            artist=asset_data["artistName"],
+            artist_id=(
+                int(asset_data["artistId"]) if asset_data.get("artistId") else None
+            ),
+            artist_sort=asset_data["sort-artist"],
+            comment=asset_data.get("comments"),
+            compilation=asset_data.get("compilation"),
+            composer=asset_data.get("composerName"),
+            composer_id=(
+                int(asset_data.get("composerId"))
+                if asset_data.get("composerId")
+                else None
+            ),
+            composer_sort=asset_data.get("sort-composer"),
+            copyright=asset_data.get("copyright"),
+            date=date,
+            disc=asset_data.get("discNumber"),
+            disc_total=asset_data.get("discCount"),
+            gapless=asset_data.get("gapless"),
+            genre=asset_data.get("genre"),
+            genre_id=(
+                int(asset_data["genreId"]) if asset_data.get("genreId") else None
+            ),
+            lyrics=lyrics if lyrics else None,
+            media_type=(
+                MediaType.SONG
+                if asset_data["kind"] == "song"
+                else MediaType.MUSIC_VIDEO
+            ),
+            rating=MediaRating(asset_data["explicit"]),
+            storefront=(int(asset_data["s"]) if asset_data.get("s") else None),
+            title=asset_data["itemName"],
+            title_id=int(asset_data["itemId"]),
+            title_sort=asset_data["sort-name"],
+            track=asset_data.get("trackNumber"),
+            track_total=asset_data.get("trackCount"),
+            xid=asset_data.get("xid"),
+        )
+
+        log.debug("success", tags=tags)
+
+        return tags

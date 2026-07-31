@@ -6,7 +6,7 @@ from typing import Annotated
 import click
 from dataclass_click import argument, option
 
-from ..api import AppleMusicApi
+from ..api import AppleMusicApi, WrapperApi
 from ..downloader import (
     AppleMusicBaseDownloader,
     AppleMusicDownloader,
@@ -31,20 +31,23 @@ from ..interface import (
 )
 from .utils import Csv
 
-api_from_cookies_sig = inspect.signature(AppleMusicApi.create_from_netscape_cookies)
-api_from_wrapper_sig = inspect.signature(AppleMusicApi.create_from_wrapper)
+api_from_cookies_sig = inspect.signature(
+    AppleMusicApi.create_from_netscape_cookies)
+wrapper_api_create_sig = inspect.signature(WrapperApi.create)
 api_create_sig = inspect.signature(AppleMusicApi.create)
 
 base_interface_create_sig = inspect.signature(AppleMusicBaseInterface.create)
 song_interface_sig = inspect.signature(AppleMusicSongInterface.__init__)
-music_video_interface_sig = inspect.signature(AppleMusicMusicVideoInterface.__init__)
+music_video_interface_sig = inspect.signature(
+    AppleMusicMusicVideoInterface.__init__)
 uploaded_video_interface_sig = inspect.signature(
     AppleMusicUploadedVideoInterface.__init__
 )
 interface_create_sig = inspect.signature(AppleMusicInterface)
 
 base_downloader_sig = inspect.signature(AppleMusicBaseDownloader.__init__)
-music_video_downloader_sig = inspect.signature(AppleMusicMusicVideoDownloader.__init__)
+music_video_downloader_sig = inspect.signature(
+    AppleMusicMusicVideoDownloader.__init__)
 downloader_sig = inspect.signature(AppleMusicDownloader.__init__)
 
 
@@ -145,6 +148,31 @@ class CliConfig:
             is_flag=True,
         ),
     ]
+    # Wrapper specific options
+    wrapper_url: Annotated[
+        str,
+        option(
+            "--wrapper-url",
+            help="Wrapper base URL",
+            default=wrapper_api_create_sig.parameters["base_url"].default,
+        ),
+    ]
+    wrapper_decrypt_host: Annotated[
+        str,
+        option(
+            "--wrapper-decrypt-host",
+            help="Wrapper TCP decrypt host",
+            default=wrapper_api_create_sig.parameters["decrypt_host"].default,
+        ),
+    ]
+    wrapper_decrypt_port: Annotated[
+        int,
+        option(
+            "--wrapper-decrypt-port",
+            help="Wrapper TCP decrypt port",
+            default=wrapper_api_create_sig.parameters["decrypt_port"].default,
+        ),
+    ]
     # API specific options
     cookies_path: Annotated[
         str,
@@ -159,14 +187,6 @@ class CliConfig:
                 readable=True,
                 resolve_path=True,
             ),
-        ),
-    ]
-    wrapper_account_url: Annotated[
-        str,
-        option(
-            "--wrapper-account-url",
-            help="Wrapper account URL",
-            default=api_from_wrapper_sig.parameters["wrapper_account_url"].default,
         ),
     ]
     media_user_token: Annotated[
@@ -219,9 +239,9 @@ class CliConfig:
             help=".wvd file path",
             default=base_interface_create_sig.parameters["wvd_path"].default,
             type=click.Path(
-                file_okay=False,
-                dir_okay=True,
-                writable=True,
+                file_okay=True,
+                dir_okay=False,
+                writable=False,
                 resolve_path=True,
             ),
         ),
@@ -230,16 +250,8 @@ class CliConfig:
         bool,
         option(
             "--use-wrapper",
-            help="Use wrapper for decrypting songs",
+            help="Use wrapper for account, playback, and decryption requests",
             is_flag=True,
-        ),
-    ]
-    wrapper_m3u8_ip: Annotated[
-        str,
-        option(
-            "--wrapper-m3u8-ip",
-            help="Wrapper m3u8 IP address and port",
-            default=base_interface_create_sig.parameters["wrapper_m3u8_ip"].default,
         ),
     ]
     # Song Interface Options
@@ -336,36 +348,12 @@ class CliConfig:
             default=base_downloader_sig.parameters["nm3u8dlre_path"].default,
         ),
     ]
-    mp4decrypt_path: Annotated[
-        str,
-        option(
-            "--mp4decrypt-path",
-            help="mp4decrypt executable path",
-            default=base_downloader_sig.parameters["mp4decrypt_path"].default,
-        ),
-    ]
     ffmpeg_path: Annotated[
         str,
         option(
             "--ffmpeg-path",
             help="FFmpeg executable path",
             default=base_downloader_sig.parameters["ffmpeg_path"].default,
-        ),
-    ]
-    mp4box_path: Annotated[
-        str,
-        option(
-            "--mp4box-path",
-            help="MP4Box executable path",
-            default=base_downloader_sig.parameters["mp4box_path"].default,
-        ),
-    ]
-    wrapper_decrypt_ip: Annotated[
-        str,
-        option(
-            "--wrapper-decrypt-ip",
-            help="IP address and port for wrapper decryption",
-            default=base_downloader_sig.parameters["wrapper_decrypt_ip"].default,
         ),
     ]
     download_mode: Annotated[
@@ -477,15 +465,6 @@ class CliConfig:
         ),
     ]
     # DownloaderMusicVideo specific options
-    music_video_remux_mode: Annotated[
-        RemuxMode,
-        option(
-            "--music-video-remux-mode",
-            help="Remux mode",
-            default=music_video_downloader_sig.parameters["remux_mode"].default,
-            type=RemuxMode,
-        ),
-    ]
     music_video_remux_format: Annotated[
         RemuxFormatMusicVideo,
         option(
