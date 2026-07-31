@@ -106,6 +106,7 @@ async def main(config: CliConfig):
             token=config.auth_token,
             language=config.language,
         )
+        wrapper_api = None
         
     else:
         cookies_path = prompt_path(config.cookies_path)
