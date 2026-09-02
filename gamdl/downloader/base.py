@@ -227,19 +227,19 @@ class AppleMusicBaseDownloader:
                 disc_total=(tags.disc_total, ""),
                 media_type=(tags.media_type, "Unknown Media Type"),
                 playlist_artist=(
-                    (playlist_tags.artist if playlist_tags else None),
+                    (playlist_tags.artist if playlist_tags else tags.album_artist),
                     "Unknown Playlist Artist",
                 ),
                 playlist_id=(
-                    (playlist_tags.playlist_id if playlist_tags else None),
+                    (playlist_tags.playlist_id if playlist_tags else tags.album_id),
                     "Unknown Playlist ID",
                 ),
                 playlist_title=(
-                    (playlist_tags.title if playlist_tags else None),
+                    (playlist_tags.title if playlist_tags else tags.album),
                     "Unknown Playlist Title",
                 ),
                 playlist_track=(
-                    (playlist_tags.track if playlist_tags else None),
+                    (playlist_tags.track if playlist_tags else tags.track),
                     "",
                 ),
                 title=(tags.title, "Unknown Title"),
